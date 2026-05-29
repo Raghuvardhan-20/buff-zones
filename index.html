@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html>
+<head>
+<meta charset="utf-8">
+<title>SAGE GeoJSON BLE Transfer</title>
+</head>
 
 <body>
 
-<h2>SAGE TXT Transfer</h2>
+<h2>SAGE GeoJSON → ESP32</h2>
 
 <button onclick="connectBLE()">Connect ESP32</button>
-
-<button onclick="sendTXT()">Send zones.txt</button>
+<button onclick="convertAndSend()">Convert & Send</button>
 
 <pre id="status"></pre>
 
@@ -15,71 +18,174 @@
 
 let characteristic;
 
+const TYPE_MAP = {
+    school: "S",
+    hospital: "H",
+    clinic: "H",
+    college: "C",
+    university: "U",
+    general: "G"
+};
+
 function log(msg) {
-  document.getElementById("status").textContent += msg + "\n";
+    document.getElementById("status").textContent += msg + "\n";
 }
 
 async function connectBLE() {
 
-  const device = await navigator.bluetooth.requestDevice({
-    filters: [{ name: 'SAGE_ESP32' }],
-    optionalServices: ['12345678-1234-1234-1234-1234567890ab']
-  });
+    const device = await navigator.bluetooth.requestDevice({
+        filters: [{ name: "SAGE_ESP32" }],
+        optionalServices: [
+            "12345678-1234-1234-1234-1234567890ab"
+        ]
+    });
 
-  const server = await device.gatt.connect();
+    const server = await device.gatt.connect();
 
-  const service = await server.getPrimaryService(
-    '12345678-1234-1234-1234-1234567890ab'
-  );
+    const service = await server.getPrimaryService(
+        "12345678-1234-1234-1234-1234567890ab"
+    );
 
-  characteristic = await service.getCharacteristic(
-    'abcd1234-5678-1234-5678-abcdef123456'
-  );
+    characteristic = await service.getCharacteristic(
+        "abcd1234-5678-1234-5678-abcdef123456"
+    );
 
-  log("ESP32 Connected");
+    log("ESP32 Connected");
 }
 
-async function sendTXT() {
+function geojsonToTxt(geojson) {
 
-  log("Fetching zones.txt...");
+    let output = "";
 
-  const response = await fetch(
-    "https://gist.githubusercontent.com/Raghuvardhan-20/48c8135cd8e0394c18cafe8823925959/raw/2c4440f1da4a1a8f1dbb95ee23c6026006fca0ed/zones.txt"
-  );
+    let zones = 0;
+    let points = 0;
 
-  const text = await response.text();
+    for (const feature of geojson.features) {
 
-  log("File Size: " + text.length + " bytes");
+        const props = feature.properties || {};
+        const geometry = feature.geometry || {};
 
-  const chunkSize = 100;
+        if (geometry.type !== "Polygon")
+            continue;
 
-  for (let i = 0; i < text.length; i += chunkSize) {
+        const zoneType =
+            (props.type || "general").toLowerCase();
 
-    const chunk = text.substring(i, i + chunkSize);
+        const shortType =
+            TYPE_MAP[zoneType] || "G";
+
+        const speedLimit =
+            parseInt(props.limit || 40);
+
+        let coords =
+            [...geometry.coordinates[0]];
+
+        if (
+            coords.length > 1 &&
+            coords[0][0] === coords[coords.length - 1][0] &&
+            coords[0][1] === coords[coords.length - 1][1]
+        ) {
+            coords.pop();
+        }
+
+        output +=
+            `${shortType},${speedLimit},${coords.length}\n`;
+
+        for (const point of coords) {
+
+            const lon =
+                Number(point[0]).toFixed(5);
+
+            const lat =
+                Number(point[1]).toFixed(5);
+
+            output += `${lon},${lat}\n`;
+
+            points++;
+        }
+
+        output += "\n";
+
+        zones++;
+    }
+
+    log("Zones: " + zones);
+    log("Points: " + points);
+
+    return output;
+}
+
+async function sendText(text) {
+
+    if (!characteristic) {
+        alert("Connect ESP32 first");
+        return;
+    }
 
     const encoder = new TextEncoder();
 
+    const chunkSize = 100;
+
+    log("Sending...");
+
+    for (let i = 0; i < text.length; i += chunkSize) {
+
+        const chunk =
+            text.substring(i, i + chunkSize);
+
+        await characteristic.writeValue(
+            encoder.encode(chunk)
+        );
+
+        log(
+            "Chunk " +
+            (Math.floor(i / chunkSize) + 1)
+        );
+
+        await new Promise(resolve =>
+            setTimeout(resolve, 50)
+        );
+    }
+
     await characteristic.writeValue(
-      encoder.encode(chunk)
+        encoder.encode("END_FILE")
     );
 
-    log("Chunk Sent: " + (i / chunkSize + 1));
+    log("Transfer Complete");
+}
 
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
+async function convertAndSend() {
 
-  // END SIGNAL
-  const encoder = new TextEncoder();
+    try {
 
-  await characteristic.writeValue(
-    encoder.encode("END_FILE")
-  );
+        log("Loading zones.geojson...");
 
-  log("Transfer Complete");
+        const response =
+            await fetch("zones.geojson");
+
+        const geojson =
+            await response.json();
+
+        log("Converting...");
+
+        const txtData =
+            geojsonToTxt(geojson);
+
+        log(
+            "TXT Size: " +
+            txtData.length +
+            " bytes"
+        );
+
+        await sendText(txtData);
+
+    } catch (err) {
+
+        log("ERROR: " + err);
+    }
 }
 
 </script>
 
 </body>
-
 </html>
