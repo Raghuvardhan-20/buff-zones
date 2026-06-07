@@ -172,7 +172,7 @@ async function connectBLE(){
 try{
 
 document.getElementById("deviceStatus").innerHTML =
-"🔵 Searching for ESP32...";
+"🔵 Searching for Device...";
 
 const device = await navigator.bluetooth.requestDevice({
     acceptAllDevices: true,
@@ -195,9 +195,9 @@ characteristic = await service.getCharacteristic(
 );
 
 document.getElementById("deviceStatus").innerHTML =
-"🟢 ESP32 Connected";
+"🟢 Device Connected";
 
-complete("step1","ESP32 Connected");
+complete("step1","Device Connected");
 
 }
 catch(err){
@@ -262,7 +262,7 @@ return output;
 async function sendText(text){
 
 if(!characteristic){
-alert("Connect ESP32 first");
+alert("Connect Device first");
 return;
 }
 
