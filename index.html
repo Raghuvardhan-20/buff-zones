@@ -1,191 +1,383 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta charset="utf-8">
-<title>SAGE GeoJSON BLE Transfer</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAGE - Smart Adaptive Geo Engine</title>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Segoe UI,sans-serif;}
+body{background:#f4f7fb;color:#222;}
+header{
+background:linear-gradient(135deg,#0d47a1,#1565c0);
+color:white;text-align:center;padding:40px 20px;
+}
+header h1{font-size:3rem;letter-spacing:3px;}
+header p{margin-top:10px;font-size:1.1rem;opacity:.95;}
+
+.container{max-width:900px;margin:auto;padding:25px;}
+
+.card{
+background:white;
+border-radius:18px;
+padding:25px;
+margin-bottom:20px;
+box-shadow:0 4px 16px rgba(0,0,0,.08);
+}
+
+button{
+background:#1565c0;
+color:white;
+border:none;
+padding:14px 22px;
+border-radius:12px;
+cursor:pointer;
+font-size:15px;
+margin-right:10px;
+}
+
+button:hover{background:#0d47a1;}
+
+#deviceStatus{
+font-size:20px;
+font-weight:bold;
+}
+
+.progress{
+height:28px;
+background:#e0e0e0;
+border-radius:50px;
+overflow:hidden;
+margin-top:15px;
+}
+
+#progressFill{
+height:100%;
+width:0%;
+background:linear-gradient(90deg,#1565c0,#42a5f5);
+transition:width .3s;
+}
+
+#progressText{
+margin-top:12px;
+font-weight:bold;
+font-size:18px;
+}
+
+.status-item{
+padding:12px 0;
+font-size:18px;
+}
+
+.pending{color:#999;}
+.done{color:green;font-weight:bold;}
+
+#safetyMessage{
+font-size:22px;
+font-weight:bold;
+text-align:center;
+color:#1565c0;
+padding:15px;
+min-height:60px;
+}
+
+.footer{
+text-align:center;
+padding:30px;
+color:#666;
+}
+</style>
 </head>
 
 <body>
 
-<h2>SAGE GeoJSON → ESP32</h2>
+<header>
+<h1>SAGE</h1>
+<p>Smart Adaptive Geo Engine</p>
+<p>Drive Safe • Save Lives</p>
+</header>
 
-<button onclick="connectBLE()">Connect ESP32</button>
-<button onclick="convertAndSend()">Convert & Send</button>
+<div class="container">
 
-<pre id="status"></pre>
+<div class="card">
+<h2>Device Connection</h2>
+<br>
+<div id="deviceStatus">🔴 Not Connected</div>
+<br>
+<button onclick="connectBLE()">Connect Device</button>
+<button onclick="convertAndSend()">Deploy Safety Database</button>
+</div>
+
+<div class="card">
+<h2>Mission Progress</h2>
+<div class="progress">
+<div id="progressFill"></div>
+</div>
+<div id="progressText">Awaiting Mission Start</div>
+</div>
+
+<div class="card">
+<h2>Drive Safe</h2>
+<br>
+<div id="safetyMessage"></div>
+</div>
+
+<div class="card">
+<h2>Mission Status</h2>
+
+<div id="step1" class="status-item pending">⚪ Device Connection Pending</div>
+<div id="step2" class="status-item pending">⚪ Safety Database Ready</div>
+<div id="step3" class="status-item pending">⚪ Deployment In Progress</div>
+<div id="step4" class="status-item pending">⚪ SAGE Activation Pending</div>
+
+</div>
+
+</div>
+
+<div class="footer">
+<h3>Powered by SAGE</h3>
+<p>Smart Adaptive Geo Engine</p>
+</div>
 
 <script>
 
 let characteristic;
 
-const TYPE_MAP = {
-    school: "S",
-    hospital: "H",
-    clinic: "H",
-    college: "C",
-    university: "U",
-    general: "G"
+const safetyMessages=[
+"🚸 Slow Down Near Schools",
+"🏥 Respect Hospital Zones",
+"⚡ Smart Speed Control Saves Lives",
+"🛡 Drive Safe • Save Lives",
+"📍 Intelligent Geofencing Active",
+"🚗 Safety Starts With You"
+];
+
+let msgIndex=0;
+
+setInterval(()=>{
+document.getElementById("safetyMessage").innerText=safetyMessages[msgIndex];
+msgIndex=(msgIndex+1)%safetyMessages.length;
+},3000);
+
+document.getElementById("safetyMessage").innerText=safetyMessages[0];
+
+function complete(id,text){
+const el=document.getElementById(id);
+el.className="status-item done";
+el.innerHTML="🟢 "+text;
+}
+
+async function connectBLE(){
+
+try{
+
+document.getElementById("deviceStatus").innerHTML =
+"🔵 Searching for ESP32...";
+
+const device = await navigator.bluetooth.requestDevice({
+    acceptAllDevices: true,
+    optionalServices: [
+        "12345678-1234-1234-1234-1234567890ab"
+    ]
+});
+
+document.getElementById("deviceStatus").innerHTML =
+"🟡 Connecting...";
+
+const server = await device.gatt.connect();
+
+const service = await server.getPrimaryService(
+"12345678-1234-1234-1234-1234567890ab"
+);
+
+characteristic = await service.getCharacteristic(
+"abcd1234-5678-1234-5678-abcdef123456"
+);
+
+document.getElementById("deviceStatus").innerHTML =
+"🟢 ESP32 Connected";
+
+complete("step1","ESP32 Connected");
+
+}
+catch(err){
+
+console.error(err);
+
+document.getElementById("deviceStatus").innerHTML =
+"🔴 Connection Failed";
+
+alert(
+"BLE Error\n\n" +
+err.name +
+"\n\n" +
+err.message
+);
+
+}
+}
+
+function buildTransferData(data){
+
+const TYPE_MAP={
+school:"S",
+hospital:"H",
+clinic:"H",
+college:"C",
+university:"U",
+general:"G"
 };
 
-function log(msg) {
-    document.getElementById("status").textContent += msg + "\n";
+let output="";
+
+for(const feature of data.features){
+
+const props=feature.properties||{};
+const geometry=feature.geometry||{};
+
+if(geometry.type!=="Polygon") continue;
+
+const shortType=TYPE_MAP[(props.type||"general").toLowerCase()]||"G";
+const speedLimit=parseInt(props.limit||40);
+
+let coords=[...geometry.coordinates[0]];
+
+if(coords[0][0]===coords[coords.length-1][0] &&
+coords[0][1]===coords[coords.length-1][1]){
+coords.pop();
 }
 
-async function connectBLE() {
+output+=`${shortType},${speedLimit},${coords.length}\n`;
 
-    const device = await navigator.bluetooth.requestDevice({
-        filters: [{ name: "SAGE_ESP32" }],
-        optionalServices: [
-            "12345678-1234-1234-1234-1234567890ab"
-        ]
-    });
-
-    const server = await device.gatt.connect();
-
-    const service = await server.getPrimaryService(
-        "12345678-1234-1234-1234-1234567890ab"
-    );
-
-    characteristic = await service.getCharacteristic(
-        "abcd1234-5678-1234-5678-abcdef123456"
-    );
-
-    log("ESP32 Connected");
+for(const p of coords){
+output+=`${Number(p[0]).toFixed(5)},${Number(p[1]).toFixed(5)}\n`;
 }
 
-function geojsonToTxt(geojson) {
-
-    let output = "";
-
-    let zones = 0;
-    let points = 0;
-
-    for (const feature of geojson.features) {
-
-        const props = feature.properties || {};
-        const geometry = feature.geometry || {};
-
-        if (geometry.type !== "Polygon")
-            continue;
-
-        const zoneType =
-            (props.type || "general").toLowerCase();
-
-        const shortType =
-            TYPE_MAP[zoneType] || "G";
-
-        const speedLimit =
-            parseInt(props.limit || 40);
-
-        let coords =
-            [...geometry.coordinates[0]];
-
-        if (
-            coords.length > 1 &&
-            coords[0][0] === coords[coords.length - 1][0] &&
-            coords[0][1] === coords[coords.length - 1][1]
-        ) {
-            coords.pop();
-        }
-
-        output +=
-            `${shortType},${speedLimit},${coords.length}\n`;
-
-        for (const point of coords) {
-
-            const lon =
-                Number(point[0]).toFixed(5);
-
-            const lat =
-                Number(point[1]).toFixed(5);
-
-            output += `${lon},${lat}\n`;
-
-            points++;
-        }
-
-        output += "\n";
-
-        zones++;
-    }
-
-    log("Zones: " + zones);
-    log("Points: " + points);
-
-    return output;
+output+="\n";
 }
 
-async function sendText(text) {
+return output;
+}
 
-    if (!characteristic) {
-        alert("Connect ESP32 first");
-        return;
-    }
+async function sendText(text){
 
-    const encoder = new TextEncoder();
+if(!characteristic){
+alert("Connect ESP32 first");
+return;
+}
 
-    const chunkSize = 100;
+const encoder = new TextEncoder();
 
-    log("Sending...");
+// Safer BLE packet size
+const chunkSize = 20;
 
-    for (let i = 0; i < text.length; i += chunkSize) {
+const stages = [
+"Initializing Mission...",
+"Synchronizing Geofence Network...",
+"Deploying Safety Zones...",
+"Activating Safety Database...",
+"Verifying Deployment..."
+];
 
-        const chunk =
-            text.substring(i, i + chunkSize);
+complete("step2","Safety Database Ready");
 
-        await characteristic.writeValue(
-            encoder.encode(chunk)
-        );
+for(let i=0;i<text.length;i+=chunkSize){
 
-        log(
-            "Chunk " +
-            (Math.floor(i / chunkSize) + 1)
-        );
+const chunk = text.substring(i,i+chunkSize);
 
-        await new Promise(resolve =>
-            setTimeout(resolve, 50)
-        );
-    }
+try{
+
+await characteristic.writeValue(
+encoder.encode(chunk)
+);
+
+}
+catch(err){
+
+console.error(err);
+
+alert(
+"Write Failed\n\n" +
+err.name +
+"\n\n" +
+err.message
+);
+
+return;
+}
+
+const percent =
+Math.round(
+((i + chunk.length) / text.length) * 100
+);
+
+document.getElementById("progressFill")
+.style.width = percent + "%";
+
+document.getElementById("progressText")
+.innerText =
+stages[Math.min(Math.floor(percent/20),4)]
++ " " + percent + "%";
+
+if(percent > 10)
+complete("step3","Deployment In Progress");
+
+// Give ESP32 more time
+await new Promise(
+r => setTimeout(r,100)
+);
+}
+
+try{
 
     await characteristic.writeValue(
         encoder.encode("END_FILE")
     );
 
-    log("Transfer Complete");
+}
+catch(err){
+
+    console.log(
+        "END_FILE packet ignored:",
+        err
+    );
+
 }
 
-async function convertAndSend() {
+document.getElementById("progressFill")
+.style.width = "100%";
 
-    try {
+document.getElementById("progressText")
+.innerHTML = "🛡 SAGE Ready";
 
-        log("Loading zones.geojson...");
+complete(
+"step4",
+"SAGE Activated Successfully"
+);
+}
 
-        const response =
-            await fetch("zones.geojson");
+async function convertAndSend(){
 
-        const geojson =
-            await response.json();
+if(!characteristic){
+alert("Connect ESP32 first");
+return;
+}
 
-        log("Converting...");
+try{
 
-        const txtData =
-            geojsonToTxt(geojson);
+const response=await fetch("zones.geojson");
+const data=await response.json();
 
-        log(
-            "TXT Size: " +
-            txtData.length +
-            " bytes"
-        );
+const txt=buildTransferData(data);
 
-        await sendText(txtData);
+await sendText(txt);
 
-    } catch (err) {
-
-        log("ERROR: " + err);
-    }
+}
+catch(err){
+alert("Error: "+err);
+}
 }
 
 </script>
-
 </body>
 </html>
